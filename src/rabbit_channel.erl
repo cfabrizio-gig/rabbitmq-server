@@ -1311,7 +1311,8 @@ handle_method(#'basic.cancel'{consumer_tag = ConsumerTag, nowait = NoWait},
         error ->
             %% Spec requires we ignore this situation.
             return_ok(State, NoWait, OkMsg);
-        {ok, {Q = #amqqueue{pid = QPid}, _CParams}} ->
+        {ok, {Q, _CParams}} when ?is_amqqueue(Q) ->
+            QPid = amqqueue:get_pid(Q),
             ConsumerMapping1 = maps:remove(ConsumerTag, ConsumerMapping),
             QCons1 =
                 case maps:find(QPid, QCons) of
@@ -1578,11 +1579,11 @@ handle_method(_MethodRecord, _Content, _State) ->
 %% for why.
 basic_consume(QueueName, NoAck, ConsumerPrefetch, ActualConsumerTag,
               ExclusiveConsume, Args, NoWait,
-              State = #ch{conn_pid          = ConnPid,
-                          limiter           = Limiter,
-                          consumer_mapping  = ConsumerMapping,
-                          user              = #user{username = Username},
-                          queue_states      = QueueStates0}) ->
+              State0 = #ch{conn_pid          = ConnPid,
+                           limiter           = Limiter,
+                           consumer_mapping  = ConsumerMapping,
+                           user              = #user{username = Username},
+                           queue_states      = QueueStates0}) ->
     case rabbit_amqqueue:with_exclusive_access_or_die(
            QueueName, ConnPid,
            fun (Q) ->
@@ -1597,34 +1598,38 @@ basic_consume(QueueName, NoAck, ConsumerPrefetch, ActualConsumerTag,
                       Username, QueueStates0),
                     Q}
            end) of
-        {{ok, QueueStates}, Q = #amqqueue{pid = QPid, name = QName}} ->
-            CM1 = maps:put(
-                    ActualConsumerTag,
-                    {Q, {NoAck, ConsumerPrefetch, ExclusiveConsume, Args}},
-                    ConsumerMapping),
-            State1 = monitor_delivering_queue(
-                       NoAck, QPid, QName,
-                       State#ch{consumer_mapping = CM1,
-                                queue_states = QueueStates}),
-            {ok, case NoWait of
-                     true  -> consumer_monitor(ActualConsumerTag, State1);
-                     false -> State1
-                 end};
-        {ok, Q = #amqqueue{pid = QPid, name = QName}} ->
-            CM1 = maps:put(
-                    ActualConsumerTag,
-                    {Q, {NoAck, ConsumerPrefetch, ExclusiveConsume, Args}},
-                    ConsumerMapping),
-            State1 = monitor_delivering_queue(
-                       NoAck, QPid, QName,
-                       State#ch{consumer_mapping = CM1}),
-            {ok, case NoWait of
-                     true  -> consumer_monitor(ActualConsumerTag, State1);
-                     false -> State1
-                 end};
+        {{ok, QueueStates}, Q} when ?is_amqqueue(Q) ->
+            State1 = priv_basic_consume(Q, NoAck,
+                                        ConsumerPrefetch, ActualConsumerTag,
+                                        ExclusiveConsume, Args, NoWait,
+                                        ConsumerMapping, State0),
+            {ok, State1#ch{queue_states = QueueStates}};
+        {ok, Q} when ?is_amqqueue(Q) ->
+            State1 = priv_basic_consume(Q, NoAck,
+                                        ConsumerPrefetch, ActualConsumerTag,
+                                        ExclusiveConsume, Args, NoWait,
+                                        ConsumerMapping, State0),
+            {ok, State1};
         {{error, exclusive_consume_unavailable} = E, _Q} ->
             E
     end.
+
+priv_basic_consume(Q, NoAck,
+                   ConsumerPrefetch, ActualConsumerTag,
+                   ExclusiveConsume, Args, NoWait,
+                   ConsumerMapping0, State0) ->
+    QPid = amqqueue:get_pid(Q),
+    QName = amqqueue:get_name(Q),
+    ConsumerMapping1 = maps:put(ActualConsumerTag,
+                                {Q, {NoAck, ConsumerPrefetch, ExclusiveConsume, Args}},
+                                ConsumerMapping0),
+    State1 = State0#ch{consumer_mapping = ConsumerMapping1},
+    State2 = monitor_delivering_queue(NoAck, QPid, QName, State1),
+    State3 = case NoWait of
+                 true  -> consumer_monitor(ActualConsumerTag, State2);
+                 false -> State2
+             end,
+    State3.
 
 maybe_stat(false, Q) -> rabbit_amqqueue:stat(Q);
 maybe_stat(true, _Q) -> {ok, 0, 0}.
