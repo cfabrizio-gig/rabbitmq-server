@@ -101,7 +101,9 @@ match(Name = #resource{virtual_host = VHost}) ->
 match_op(Name = #resource{virtual_host = VHost}) ->
     match(Name, list_op(VHost)).
 
-get(Name, #amqqueue{policy = Policy, operator_policy = OpPolicy}) ->
+get(Name, Q) when ?is_amqqueue(Q) ->
+    Policy = amqqueue:get_policy(Q),
+    OpPolicy = amqqueue:get_operator_policy(Q),
     get0(Name, Policy, OpPolicy);
 get(Name, #exchange{policy = Policy, operator_policy = OpPolicy}) ->
     get0(Name, Policy, OpPolicy);

@@ -2329,13 +2329,13 @@ handle_method(#'queue.declare'{queue   = QueueNameBin,
               ConnPid, _CollectorPid, VHostPath, _User, QueueStates0) ->
     StrippedQueueNameBin = strip_cr_lf(QueueNameBin),
     QueueName = rabbit_misc:r(VHostPath, queue, StrippedQueueNameBin),
-    Fun = fun (Q) ->
-              QStat = maybe_stat(NoWait, Q),
-              {QStat, Q}
+    Fun = fun (Q0) ->
+              QStat = maybe_stat(NoWait, Q0),
+              {QStat, Q0}
           end,
-    {{ok, MessageCount, ConsumerCount}, Q} = rabbit_amqqueue:with_or_die(QueueName, Fun),
-    true = amqqueue:is_amqqueue(Q),
-    ok = rabbit_amqqueue:check_exclusive_access(Q, ConnPid),
+    %% Note: no need to check if Q1 is an #amqqueue, with_or_die does it
+    {{ok, MessageCount, ConsumerCount}, Q1} = rabbit_amqqueue:with_or_die(QueueName, Fun),
+    ok = rabbit_amqqueue:check_exclusive_access(Q1, ConnPid),
     {ok, QueueName, MessageCount, ConsumerCount, QueueStates0};
 handle_method(#'queue.delete'{queue     = QueueNameBin,
                               if_unused = IfUnused,

@@ -395,7 +395,7 @@ policy(Policy, Q) ->
         P         -> P
     end.
 
-module(#amqqueue{} = Q) ->
+module(Q) when ?is_amqqueue(Q) ->
     case rabbit_policy:get(<<"ha-mode">>, Q) of
         undefined -> not_mirrored;
         Mode      -> module(Mode)
