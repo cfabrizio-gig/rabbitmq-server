@@ -239,7 +239,7 @@ matches(new, Q1, Q2) ->
     amqqueue:is_durable(Q1)          =:= amqqueue:is_durable(Q2)          andalso
     amqqueue:is_auto_delete(Q1)      =:= amqqueue:is_auto_delete(Q2)      andalso
     amqqueue:get_exclusive_owner(Q1) =:= amqqueue:get_exclusive_owner(Q2) andalso
-    amqqueue:get_args(Q1)            =:= amqqueue:get_args(Q2)            andalso
+    amqqueue:get_arguments(Q1)       =:= amqqueue:get_arguments(Q2)            andalso
     amqqueue:get_pid(Q1)             =:= amqqueue:get_pid(Q2)             andalso
     amqqueue:get_slave_pids(Q1)      =:= amqqueue:get_slave_pids(Q2);
 %% FIXME: Should v1 vs. v2 of the same record match?
@@ -419,7 +419,7 @@ process_args_policy(State = #q{q                   = Q,
                      end, State#q{args_policy_version = N + 1}, ArgsTable)).
 
 args_policy_lookup(Name, Resolve, Q) ->
-    Args = amqqueue:get_args(Q),
+    Args = amqqueue:get_arguments(Q),
     AName = <<"x-", Name/binary>>,
     case {rabbit_policy:get(Name, Q), rabbit_misc:table_lookup(Args, AName)} of
         {undefined, undefined}       -> undefined;
@@ -990,7 +990,7 @@ infos(Items, State) -> [{Item, i(Item, State)} || Item <- Items].
 i(name,        #q{q = Q}) -> amqqueue:get_name(Q);
 i(durable,     #q{q = Q}) -> amqqueue:is_durable(Q);
 i(auto_delete, #q{q = Q}) -> amqqueue:is_auto_delete(Q);
-i(arguments,   #q{q = Q}) -> amqqueue:get_args(Q);
+i(arguments,   #q{q = Q}) -> amqqueue:get_arguments(Q);
 i(pid, _) ->
     self();
 i(owner_pid, #q{q = Q}) when ?amqqueue_exclusive_owner_is(Q, none) ->

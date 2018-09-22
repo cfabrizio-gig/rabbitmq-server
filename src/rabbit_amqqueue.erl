@@ -587,7 +587,7 @@ with_exclusive_access_or_die(Name, ReaderPid, F) ->
 
 assert_args_equivalence(Q, RequiredArgs) ->
     QueueName = amqqueue:get_name(Q),
-    Args = amqqueue:get_args(Q),
+    Args = amqqueue:get_arguments(Q),
     rabbit_misc:assert_args_equivalence(Args, RequiredArgs, QueueName,
                                         [Key || {Key, _Fun} <- declare_args()]).
 
@@ -822,7 +822,7 @@ info_down(Q, Items, DownReason) ->
 i_down(name,               Q, _) -> amqqueue:get_name(Q);
 i_down(durable,            Q, _) -> amqqueue:is_durable(Q);
 i_down(auto_delete,        Q, _) -> amqqueue:is_auto_delete(Q);
-i_down(arguments,          Q, _) -> amqqueue:get_args(Q);
+i_down(arguments,          Q, _) -> amqqueue:get_arguments(Q);
 i_down(pid,                Q, _) -> amqqueue:get_pid(Q);
 i_down(recoverable_slaves, Q, _) -> amqqueue:get_recoverable_slaves(Q);
 i_down(state, _Q, DownReason)    -> DownReason;

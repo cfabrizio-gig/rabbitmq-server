@@ -94,8 +94,9 @@
     rabbit_fifo_client:state().
 init_state({Name, _}, QName) ->
     {ok, SoftLimit} = application:get_env(rabbit, quorum_commands_soft_limit),
-    {ok, #amqqueue{pid = Leader, quorum_nodes = Nodes0}} =
-        rabbit_amqqueue:lookup(QName),
+    {ok, Q} = rabbit_amqqueue:lookup(QName),
+    Leader = amqqueue:get_pid(Q),
+    Nodes0 = amqqueue:get_quorum_nodes(Q),
     %% Ensure the leader is listed first
     Nodes = [Leader | lists:delete(Leader, Nodes0)],
     rabbit_fifo_client:init(QName, Nodes, SoftLimit,
@@ -105,11 +106,12 @@ init_state({Name, _}, QName) ->
 handle_event({ra_event, From, Evt}, FState) ->
     rabbit_fifo_client:handle_ra_event(From, Evt, FState).
 
-declare(#amqqueue{name = QName,
-                  durable = Durable,
-                  auto_delete = AutoDelete,
-                  arguments = Arguments,
-                  options = Opts} = Q) ->
+declare(Q) when ?is_amqqueue(Q) ->
+    QName = amqqueue:get_name(Q),
+    Durable = amqqueue:is_durable(Q),
+    AutoDelete = amqqueue:is_auto_delete(Q),
+    Arguments = amqqueue:get_arguments(Q),
+    Opts = amqqueue:get_options(Q),
     ActingUser = maps:get(user, Opts, ?UNKNOWN_USER),
     check_invalid_arguments(QName, Arguments),
     check_auto_delete(Q),
@@ -119,9 +121,9 @@ declare(#amqqueue{name = QName,
     RaName = qname_to_rname(QName),
     Id = {RaName, node()},
     Nodes = select_quorum_nodes(QuorumSize, rabbit_mnesia:cluster_nodes(all)),
-    NewQ0 = Q#amqqueue{pid = Id,
-                       quorum_nodes = Nodes},
-    case rabbit_amqqueue:internal_declare(NewQ0, false) of
+    NewQ0 = amqqueue:set_pid(Q, Id),
+    NewQ1 = amqqueue:set_quorum_nodes(NewQ0, Nodes),
+    case rabbit_amqqueue:internal_declare(NewQ1, false) of
         {created, NewQ} ->
             RaMachine = ra_machine(NewQ),
             case ra:start_cluster(RaName, RaMachine,
@@ -147,9 +149,8 @@ declare(#amqqueue{name = QName,
             Ex
     end.
 
-
-
-ra_machine(Q = #amqqueue{name = QName}) ->
+ra_machine(Q) when ?is_amqqueue(Q) ->
+    QName = amqqueue:get_name(Q),
     {module, rabbit_fifo,
      #{dead_letter_handler => dlx_mfa(Q),
        cancel_consumer_handler => {?MODULE, cancel_consumer, [QName]},
@@ -176,7 +177,9 @@ cancel_consumer(QName, ChPid, ConsumerTag) ->
 
 become_leader(QName, Name) ->
     % QName = queue_name(Name),
-    Fun = fun(Q1) -> Q1#amqqueue{pid = {Name, node()}} end,
+    Fun = fun (Q1) ->
+                  amqqueue:set_pid(Q1, {Name, node()})
+          end,
     %% as this function is called synchronously when a ra node becomes leader
     %% we need to ensure there is no chance of blocking as else the ra node
     %% cannot establish it's leadership
@@ -184,7 +187,8 @@ become_leader(QName, Name) ->
                   rabbit_misc:execute_mnesia_transaction(
                     fun() -> rabbit_amqqueue:update(QName, Fun) end),
                   case rabbit_amqqueue:lookup(QName) of
-                      {ok, #amqqueue{quorum_nodes = Nodes}} ->
+                      {ok, Q0} when ?is_amqqueue(Q0) ->
+                          Nodes = amqqueue:get_quorum_nodes(Q0),
                           [rpc:call(Node, ?MODULE, rpc_delete_metrics, [QName])
                            || Node <- Nodes, Node =/= node()];
                       _ ->
@@ -223,34 +227,36 @@ reductions(Name) ->
 
 recover(Queues) ->
     [begin
+         {Name, _} = amqqueue:get_pid(Q0),
+         Nodes = amqqueue:get_quorum_nodes(Q0),
          case ra:restart_server({Name, node()}) of
              ok ->
-
                  % queue was restarted, good
                  ok;
-             {error, Err}
-               when Err == not_started orelse
-                    Err == name_not_registered ->
+             {error, Err} when Err == not_started orelse Err == name_not_registered ->
                  % queue was never started on this node
                  % so needs to be started from scratch.
                  Machine = ra_machine(Q0),
                  RaNodes = [{Name, Node} || Node <- Nodes],
                  % TODO: should we crash the vhost here or just log the error
                  % and continue?
-                 ok = ra:start_server(Name, {Name, node()},
-                                    Machine, RaNodes)
+                 ok = ra:start_server(Name, {Name, node()}, Machine, RaNodes)
          end,
          {_, Q} = rabbit_amqqueue:internal_declare(Q0, true),
          Q
-     end || #amqqueue{pid = {Name, _},
-                      quorum_nodes = Nodes} = Q0 <- Queues].
+     end || Q0 <- Queues].
 
 stop(VHost) ->
-    _ = [ra:stop_server(Pid) || #amqqueue{pid = Pid} <- find_quorum_queues(VHost)],
+    _ = [begin
+             Pid = amqqueue:get_pid(Q),
+             ra:stop_server(Pid)
+         end || Q <- find_quorum_queues(VHost)],
     ok.
 
-delete(#amqqueue{ type = quorum, pid = {Name, _}, name = QName, quorum_nodes = QNodes},
-       _IfUnused, _IfEmpty, ActingUser) ->
+delete(Q, _IfUnused, _IfEmpty, ActingUser) when ?amqqueue_is_quorum(Q) ->
+    {Name, _} = amqqueue:get_pid(Q),
+    QName = amqqueue:get_name(Q),
+    QNodes = amqqueue:get_quorum_nodes(Q),
     %% TODO Quorum queue needs to support consumer tracking for IfUnused
     Msgs = quorum_messages(Name),
     _ = rabbit_amqqueue:internal_delete(QName, ActingUser),

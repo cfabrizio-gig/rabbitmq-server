@@ -129,7 +129,7 @@ collapse_recovery(QNames, DupNames, Recovery) ->
     [dict:fetch(Name, NameToTerms) || Name <- QNames].
 
 priorities(Q) when ?is_amqqueue(Q) ->
-    Args = amqqueue:get_args(Q),
+    Args = amqqueue:get_arguments(Q),
     Ints = [long, short, signedint, byte, unsignedbyte, unsignedshort, unsignedint],
     case rabbit_misc:table_lookup(Args, <<"x-max-priority">>) of
         {Type, RequestedMax} ->

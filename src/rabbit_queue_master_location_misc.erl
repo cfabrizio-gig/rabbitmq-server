@@ -66,7 +66,7 @@ get_location(Queue) when ?is_amqqueue(Queue) ->
     end.
 
 get_location_mod_by_args(Queue) when ?is_amqqueue(Queue) ->
-    Args = amqqueue:get_args(Queue),
+    Args = amqqueue:get_arguments(Queue),
     case rabbit_misc:table_lookup(Args, <<"x-queue-master-locator">>) of
         {_Type, Strategy}  ->
             case rabbit_queue_location_validator:validate_strategy(Strategy) of
