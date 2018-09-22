@@ -418,8 +418,8 @@ update_queue(Q0, Policies, OpPolicies) when ?is_amqqueue(Q0) ->
     case {match(QName, Policies), match(QName, OpPolicies)} of
         {OldPolicy, OldOpPolicy} -> no_change;
         {NewPolicy, NewOpPolicy} ->
-            F = fun () ->
-                    QFun1 = amqqueue:set_policy(Q0, NewPolicy),
+            F = fun (QFun0) ->
+                    QFun1 = amqqueue:set_policy(QFun0, NewPolicy),
                     QFun2 = amqqueue:set_operator_policy(QFun1, NewOpPolicy),
                     NewPolicyVersion = amqqueue:get_policy_version(QFun2) + 1,
                     QFun3 = amqqueue:set_policy_version(QFun2, NewPolicyVersion),
