@@ -438,7 +438,7 @@ notify(no_change)->
     ok;
 notify({X1 = #exchange{}, X2 = #exchange{}}) ->
     rabbit_exchange:policy_changed(X1, X2);
-notify({Q1 = #amqqueue{}, Q2 = #amqqueue{}}) ->
+notify({Q1, Q2}) when ?is_amqqueue(Q1), ?is_amqqueue(Q2) ->
     rabbit_amqqueue:policy_changed(Q1, Q2).
 
 match(Name, Policies) ->
