@@ -298,8 +298,9 @@ reject(true, CTag, MsgIds, FState) ->
 reject(false, CTag, MsgIds, FState) ->
     rabbit_fifo_client:discard(quorum_ctag(CTag), MsgIds, FState).
 
-basic_get(#amqqueue{name = QName, pid = {Name, _} = Id, type = quorum}, NoAck,
-          CTag0, FState0) ->
+basic_get(Q, NoAck, CTag0, FState0) when ?amqqueue_is_quorum(Q) ->
+    QName = amqqueue:get_name(Q),
+    {Name, _} = Id = amqqueue:get_pid(Q),
     CTag = quorum_ctag(CTag0),
     Settlement = case NoAck of
                      true ->
@@ -317,8 +318,9 @@ basic_get(#amqqueue{name = QName, pid = {Name, _} = Id, type = quorum}, NoAck,
             {error, timeout}
     end.
 
-basic_consume(#amqqueue{name = QName, type = quorum}, NoAck, ChPid,
-              ConsumerPrefetchCount, ConsumerTag, ExclusiveConsume, Args, OkMsg, FState0) ->
+basic_consume(Q, NoAck, ChPid, ConsumerPrefetchCount, ConsumerTag,
+              ExclusiveConsume, Args, OkMsg, FState0) when ?amqqueue_is_quorum(Q) ->
+    QName = amqqueue:get_name(Q),
     maybe_send_reply(ChPid, OkMsg),
     %% A prefetch count of 0 means no limitation, let's make it into something large for ra
     Prefetch = case ConsumerPrefetchCount of
@@ -384,7 +386,9 @@ status(Vhost, QueueName) ->
     QName = #resource{virtual_host = Vhost, name = QueueName, kind = queue},
     RName = qname_to_rname(QName),
     case rabbit_amqqueue:lookup(QName) of
-        {ok, #amqqueue{pid = {_, Leader}, quorum_nodes = Nodes}} ->
+        {ok, Q} when ?amqqueue_is_quorum(Q) ->
+            {_, Leader} = amqqueue:get_pid(Q),
+            Nodes = amqqueue:get_quorum_nodes(Q),
             Info = [{leader, Leader}, {members, Nodes}],
             case ets:lookup(ra_state, RName) of
                 [{_, State}] ->
@@ -399,9 +403,10 @@ status(Vhost, QueueName) ->
 add_member(VHost, Name, Node) ->
     QName = #resource{virtual_host = VHost, name = Name, kind = queue},
     case rabbit_amqqueue:lookup(QName) of
-        {ok, #amqqueue{type = classic}} ->
+        {ok, Q} when ?amqqueue_is_classic(Q) ->
             {error, classic_queue_not_supported};
-        {ok, #amqqueue{quorum_nodes = QNodes} = Q} ->
+        {ok, Q} when ?amqqueue_is_quorum(Q) ->
+            QNodes = amqqueue:get_quorum_nodes(Q),
             case lists:member(Node, rabbit_mnesia:cluster_nodes(running)) of
                 false ->
                     {error, node_not_running};
@@ -417,22 +422,28 @@ add_member(VHost, Name, Node) ->
                     E
     end.
 
-add_member(#amqqueue{pid = {RaName, _} = ServerRef, name = QName,
-                     quorum_nodes = QNodes} = Q, Node) ->
+add_member(Q0, Node) when ?amqqueue_is_quorum(Q0) ->
+    {RaName, _} = ServerRef = amqqueue:get_pid(Q0),
+    QName = amqqueue:get_name(Q0),
+    QNodes = amqqueue:get_quorum_nodes(Q0),
     %% TODO parallel calls might crash this, or add a duplicate in quorum_nodes
-    ServerId = {RaName, Node},
-    case ra:start_server(RaName, ServerId, ra_machine(Q),
-                       [{RaName, N} || N <- QNodes]) of
+    RaServerId = {RaName, Node},
+    RaMachine = ra_machine(Q0),
+    RaServerIds = [{RaName, N} || N <- QNodes],
+    case ra:start_server(RaName, RaServerId, RaMachine, RaServerIds) of
         ok ->
-            case ra:add_member(ServerRef, ServerId) of
+            case ra:add_member(ServerRef, RaServerId) of
                 {ok, _, Leader} ->
-                    Fun = fun(Q1) ->
-                                  Q1#amqqueue{quorum_nodes =
-                                                  [Node | Q1#amqqueue.quorum_nodes],
-                                              pid = Leader}
-                          end,
-                    rabbit_misc:execute_mnesia_transaction(
-                      fun() -> rabbit_amqqueue:update(QName, Fun) end),
+                    F0 = fun (Q1) ->
+                                 QNodes0 = amqqueue:get_quorum_nodes(Q1),
+                                 QNodes1 = [Node | QNodes0],
+                                 Q2 = amqqueue:set_quorum_nodes(Q1, QNodes1),
+                                 amqqueue:set_pid(Q2, Leader)
+                         end,
+                    F1 = fun () ->
+                                 rabbit_amqqueue:update(QName, F0)
+                         end,
+                    rabbit_misc:execute_mnesia_transaction(F1),
                     ok;
                 E ->
                     %% TODO should we stop the ra process here?
@@ -445,9 +456,10 @@ add_member(#amqqueue{pid = {RaName, _} = ServerRef, name = QName,
 delete_member(VHost, Name, Node) ->
     QName = #resource{virtual_host = VHost, name = Name, kind = queue},
     case rabbit_amqqueue:lookup(QName) of
-        {ok, #amqqueue{type = classic}} ->
+        {ok, Q} when ?amqqueue_is_classic(Q) ->
             {error, classic_queue_not_supported};
-        {ok, #amqqueue{quorum_nodes = QNodes} = Q} ->
+        {ok, Q} when ?amqqueue_is_quorum(Q) ->
+            QNodes = amqqueue:get_quorum_nodes(Q),
             case lists:member(Node, rabbit_mnesia:cluster_nodes(running)) of
                 false ->
                     {error, node_not_running};
@@ -463,31 +475,38 @@ delete_member(VHost, Name, Node) ->
                     E
     end.
 
-delete_member(#amqqueue{pid = {RaName, _}, name = QName}, Node) ->
+delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
+    QName = amqqueue:get_name(Q),
+    {RaName, _} = amqqueue:get_pid(Q),
     ServerId = {RaName, Node},
     case ra:leave_and_delete_server(ServerId) of
         ok ->
-            Fun = fun(Q1) ->
-                          Q1#amqqueue{quorum_nodes =
-                                          lists:delete(Node, Q1#amqqueue.quorum_nodes)}
-                  end,
-            rabbit_misc:execute_mnesia_transaction(
-              fun() -> rabbit_amqqueue:update(QName, Fun) end),
+            F0 = fun(Q1) ->
+                         QNodes0 = amqqueue:get_quorum_nodes(Q1),
+                         QNodes1 = lists:delete(Node, QNodes0),
+                         amqqueue:set_quorum_nodes(Q1, QNodes1)
+                 end,
+            F1 = fun () ->
+                         rabbit_amqqueue:update(QName, F0)
+                 end,
+            rabbit_misc:execute_mnesia_transaction(F1),
             ok;
         E ->
             E
     end.
 
 %%----------------------------------------------------------------------------
-dlx_mfa(#amqqueue{name = Resource} = Q) ->
-    #resource{virtual_host = VHost} = Resource,
+dlx_mfa(Q) when ?is_amqqueue(Q) ->
+    QName = amqqueue:get_name(Q),
+    VHost = amqqueue:get_resource_vhost(Q),
     DLX = init_dlx(args_policy_lookup(<<"dead-letter-exchange">>, fun res_arg/2, Q), Q),
     DLXRKey = args_policy_lookup(<<"dead-letter-routing-key">>, fun res_arg/2, Q),
-    {?MODULE, dead_letter_publish, [VHost, DLX, DLXRKey, Q#amqqueue.name]}.
+    {?MODULE, dead_letter_publish, [VHost, DLX, DLXRKey, QName]}.
 
 init_dlx(undefined, _Q) ->
     undefined;
-init_dlx(DLX, #amqqueue{name = QName}) ->
+init_dlx(DLX, Q) when ?is_amqqueue(Q) ->
+    QName = amqqueue:get_name(Q),
     rabbit_misc:r(QName, exchange, DLX).
 
 res_arg(_PolVal, ArgVal) -> ArgVal.
