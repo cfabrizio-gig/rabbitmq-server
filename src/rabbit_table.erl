@@ -24,7 +24,7 @@
 %% for testing purposes
 -export([definitions/0]).
 
--include("rabbit.hrl").
+-include_lib("rabbit_common/include/rabbit.hrl").
 
 %%----------------------------------------------------------------------------
 -type retry() :: boolean().
@@ -351,11 +351,11 @@ definitions() ->
       [{record_name, amqqueue},
        {attributes, record_info(fields, amqqueue)},
        {disc_copies, [node()]},
-       {match, #amqqueue{name = queue_name_match(), _='_'}}]},
+       {match, amqqueue:pattern_match_on_name(queue_name_match())}]},
      {rabbit_queue,
       [{record_name, amqqueue},
        {attributes, record_info(fields, amqqueue)},
-       {match, #amqqueue{name = queue_name_match(), _='_'}}]}]
+       {match, amqqueue:pattern_match_on_name(queue_name_match())}]}]
         ++ gm:table_definitions()
         ++ mirrored_supervisor:table_definitions().
 
