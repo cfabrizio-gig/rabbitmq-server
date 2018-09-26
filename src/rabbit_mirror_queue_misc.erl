@@ -186,7 +186,7 @@ on_vhost_up(VHost) ->
           fun () ->
                   mnesia:foldl(
                     fun
-                        (Q, QNames0) when ?amqqueue_vhost_not_equals(Q, VHost) ->
+                        (Q, QNames0) when not ?amqqueue_vhost_equals(Q, VHost) ->
                             QNames0;
                         (Q, QNames0) when ?amqqueue_is_classic(Q) ->
                             QName = amqqueue:get_name(Q),
