@@ -363,10 +363,10 @@ set_ha_policy(Config, Q, Master, Slaves) ->
     await_slaves(Q, Master, Slaves).
 
 await_slaves(Q, Master, Slaves) ->
-    {ok, #amqqueue{pid        = MPid,
-                   slave_pids = SPids}} =
-        rpc:call(Master, rabbit_amqqueue, lookup,
-                 [rabbit_misc:r(<<"/">>, queue, Q)]),
+    RpcArgs = [rabbit_misc:r(<<"/">>, queue, Q)],
+    {ok, Q} = rpc:call(Master, rabbit_amqqueue, lookup, RpcArgs),
+    MPid = amqqueue:get_pid(Q),
+    SPids = amqqueue:get_slave_pids(Q),
     ActMaster = node(MPid),
     ActSlaves = lists:usort([node(P) || P <- SPids]),
     case {Master, lists:usort(Slaves)} of
