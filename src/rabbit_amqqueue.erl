@@ -21,7 +21,7 @@
          delete_immediately/1, delete_exclusive/2, delete/4, purge/1,
          forget_all_durable/1, delete_crashed/1, delete_crashed/2,
          delete_crashed_internal/2]).
--export([pseudo_queue/2, immutable/1]).
+-export([pseudo_queue/2, pseudo_queue/3, immutable/1]).
 -export([lookup/1, not_found_or_absent/1, with/2, with/3, with_or_die/2,
          assert_equivalence/5,
          check_exclusive_access/2, with_exclusive_access_or_die/3,
@@ -198,6 +198,7 @@
 -spec on_node_up(node()) -> 'ok'.
 -spec on_node_down(node()) -> 'ok'.
 -spec pseudo_queue(name(), pid()) -> rabbit_types:amqqueue().
+-spec pseudo_queue(name(), pid(), boolean()) -> rabbit_types:amqqueue().
 -spec immutable(rabbit_types:amqqueue()) -> rabbit_types:amqqueue().
 -spec store_queue(rabbit_types:amqqueue()) -> 'ok'.
 -spec update_decorators(name()) -> 'ok'.
@@ -1394,14 +1395,18 @@ notify_queues_deleted(QueueDeletions) ->
       QueueDeletions).
 
 pseudo_queue(QueueName, Pid) ->
+    pseudo_queue(QueueName, Pid, false).
+
+pseudo_queue(QueueName, Pid, Durable) ->
     amqqueue:new(QueueName,
                  Pid,
-                 false,
+                 Durable,
                  false,
                  none, % Owner,
                  [],
                  undefined, % VHost,
-                 undefined % ActingUser
+                 undefined, % ActingUser
+                 classic % Type
                 ).
 
 immutable(Q) -> amqqueue:set_immutable(Q).
